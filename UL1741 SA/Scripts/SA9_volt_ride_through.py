@@ -1,3 +1,13 @@
+# coding: shift-jis
+####################################################################################################
+# This script was tuned specifically for the AIST FREA environment (Fixed in 2018)
+#     AIST:National Institute of Advanced Industrial Science and Technology 
+#     FREA:Fukushima Renewable Energy Institute
+#
+# What is the AIST FREA environment
+#   Communication with SunSpecSVP is middleware called ExCon, and ExCon is
+#   a mechanism to communicate with inverters and simulators.
+####################################################################################################
 """
 Copyright (c) 2018, Sandia National Labs and SunSpec Alliance
 All rights reserved.
@@ -35,13 +45,20 @@ import os
 import traceback
 from svpelab import gridsim
 from svpelab import loadsim
-from svpelab import pvsim
+###from svpelab import pvsim
 from svpelab import das
 from svpelab import der
 import result as rslt
 from svpelab import hil
 import script
 import time
+import datetime
+
+import subprocess
+from subprocess import PIPE
+import re
+import csv
+
 
 def voltage_rt_profile(v_nom=100, v1_t=100, v2_t=100, v3_t=100, t_fall=0, t_hold=1, t_rise=0, t_dwell=5, n=5):
     """
@@ -95,7 +112,11 @@ def test_run():
     result = script.RESULT_FAIL
     eut = grid = load = pv = daq_rms = daq_wf = chil = None
 
-    sc_points = ['AC_IRMS_MIN']
+### Correction as graph is not displayed
+### <START>
+###    sc_points = ['AC_IRMS_MIN']
+    sc_points = ['TIME', 'AC_VRMS_1', 'AC_IRMS_1', 'SC_TRIG', 'AC_IRMS_MIN']
+### <END>
 
     # result params
     result_params = {
@@ -112,7 +133,9 @@ def test_run():
         test_label = ts.param_value('vrt.test_label')
         # get test parameters
         phases = ts.param_value('eut.phases')
+        s_rated = ts.param_value('eut.s_rated')
         p_rated = ts.param_value('eut.p_rated')
+        p_ramp_rate = ts.param_value('eut.ramp_rate')
         v_nom = ts.param_value('eut.v_nom')
         v_msa = ts.param_value('eut.v_msa')
         t_msa = ts.param_value('eut.t_msa')
@@ -188,16 +211,16 @@ def test_run():
             ts.log('Load device: %s' % load.info())
 
         # pv simulator is initialized with test parameters and enabled
-        pv = pvsim.pvsim_init(ts)
-        pv.power_set(p_rated)
-        pv.power_on()
+###        pv = pvsim.pvsim_init(ts)
+###        pv.power_set(p_rated)
+###        pv.power_on()
 
         # initialize rms data acquisition
         daq_rms = das.das_init(ts, 'das_rms', sc_points=sc_points)
         if daq_rms is not None:
             ts.log('DAS RMS device: %s' % (daq_rms.info()))
-            daq_rms.sc['SC_TRIG'] = 0
-            daq_rms.sc['AC_IRMS_MIN'] = ''
+###            daq_rms.sc['SC_TRIG'] = 0
+###            daq_rms.sc['AC_IRMS_MIN'] = ''
 
         # initialize waveform data acquisition
         daq_wf = das.das_init(ts, 'das_wf')
@@ -217,17 +240,29 @@ def test_run():
         result_summary.write('Result, Test Name, Power Level, Phase, Dataset File\n')
         '''
 
+### Graph drawing for FREA original gnuplot
+### <START>
+        grf_dat_file = ts.results_dir() + "\SA9_volt_ride_through.csv"
+        grf_dat_file = re.sub(r'\\', "/", grf_dat_file)
+        ts.log('grf_dat_file = %s' % (grf_dat_file))
+        grf_dat = open(grf_dat_file, mode='w')
+        writer = csv.writer(grf_dat, lineterminator='\n')
+### <END>
+
         # perform all power levels and phase tests
         for power_level in power_levels:
             # set test power level
             power = power_level[0]/100 * p_rated
-            pv.power_set(power)
+###            pv.power_set(power)
+###            grid.power_set(power)
+            grid.power_setVV(power, s_rated, p_ramp_rate)   # <- Change to control from grid
             ts.log('Setting power level to %s%% of rated' % (power_level[0]))
 
             '''
             # initializing to nominal
             v = v_nom_grid
-            grid.voltage((v, v, v))
+###            grid.voltage((v, v, v))
+            grid.voltageRH(v, v, v)
             ts.log('Initializing to nominal voltage: v_1 = %s  v_2 = %s  v_3 = %s for %s seconds' % (v, v, v,
                                                                                                      t_dwell))
             ts.sleep(t_dwell)
@@ -235,7 +270,20 @@ def test_run():
 
             for phase_test in phase_tests:
                 if daq_rms is not None:
-                    daq_rms.sc['AC_IRMS_MIN'] = ''
+###                    daq_rms.sc['AC_IRMS_MIN'] = ''
+                    data = grid.wt3000_data_capture_read()                 # <- Since the graph is not displayed, it is added
+                    daq_rms.sc['TIME'] = time.time()                       # <- Since the graph is not displayed, it is added
+                    daq_rms.sc['AC_VRMS_1'] = data.get('AC_VRMS_1')        # <- Since the graph is not displayed, it is added
+                    daq_rms.sc['AC_IRMS_1'] = data.get('AC_IRMS_1')        # <- Since the graph is not displayed, it is added
+                    daq_rms.sc['SC_TRIG'] = ''                             # <- Since the graph is not displayed, it is added
+                    irms = data.get('AC_IRMS_1')                           # <- Since the graph is not displayed, it is added
+                    daq_rms.sc['AC_IRMS_MIN'] = round(irms * .8, 2)        # <- Since the graph is not displayed, it is added
+### Graph drawing for FREA original gnuplot
+### <START>
+                    now = datetime.datetime.now()
+                    grf_rec = [now.strftime("%Y/%m/%d %H:%M:%S"), data.get('AC_VRMS_1')]
+                    writer.writerow(grf_rec)
+### <END>
                     ts.log('Starting RMS data capture')
                     daq_rms.data_capture(True)
                     ts.log('Waiting 5 seconds to start test')
@@ -265,10 +313,21 @@ def test_run():
                     # get initial current level to determine threshold
                     if daq_rms is not None:
                         daq_rms.data_sample()
-                        data = daq_rms.data_capture_read()
+###                        data = daq_rms.data_capture_read()
+                        data = grid.wt3000_data_capture_read()                      # <- Since the graph is not displayed, it is added
                         irms = data.get('AC_IRMS_1')
                         if irms is not None:
+                             daq_rms.sc['TIME'] = time.time()                       # <- Since the graph is not displayed, it is added
+                             daq_rms.sc['AC_VRMS_1'] = data.get('AC_VRMS_1')        # <- Since the graph is not displayed, it is added
+                             daq_rms.sc['AC_IRMS_1'] = data.get('AC_IRMS_1')        # <- Since the graph is not displayed, it is added
+                             daq_rms.sc['SC_TRIG'] = ''                             # <- Since the graph is not displayed, it is added
                              daq_rms.sc['AC_IRMS_MIN'] = round(irms * .8, 2)
+### Graph drawing for FREA original gnuplot
+### <START>
+                        now = datetime.datetime.now()
+                        grf_rec = [now.strftime("%Y/%m/%d %H:%M:%S"), data.get('AC_VRMS_1')]
+                        writer.writerow(grf_rec)
+### <END>
 
                     ts.sleep(t_hold)
                     for i in range(n_r):
@@ -277,15 +336,18 @@ def test_run():
                         v2 = (v_2/100) * v_nom_grid
                         v3 = (v_3/100) * v_nom_grid
 
-                        grid.voltage((v, v, v))
+###                        grid.voltage((v, v, v))
+                        grid.voltageRH(v, v, v)
                         ts.log('Setting voltage: v_1 = %s  v_2 = %s  v_3 = %s for %s seconds' % (v, v, v,
                                                                                                  t_dwell))
                         ts.sleep(t_dwell)
-                        grid.voltage((v1, v2, v3))
+###                        grid.voltage((v1, v2, v3))
+                        grid.voltageRH(v1, v2, v3)
                         ts.log('Setting voltage: v_1 = %s  v_2 = %s  v_3 = %s for %s seconds' % (v1, v2, v3,
                                                                                                  t_hold))
                         ts.sleep(t_hold)
-                    grid.voltage((v, v, v))
+###                    grid.voltage((v, v, v))
+                    grid.voltageRH(v, v, v)
                     ts.log('Setting voltage: v_1 = %s  v_2 = %s  v_3 = %s for %s seconds' % (v, v, v, t_dwell))
                     ts.sleep(t_dwell)
                 if daq_rms is not None:
@@ -298,6 +360,47 @@ def test_run():
                     ts.result_file(filename, params=result_params)
                     ts.log('Saving data capture %s' % (filename))
 
+
+
+
+
+### Graph drawing for FREA original gnuplot
+### <START>
+
+        gnuplot =  subprocess.Popen('gnuplot', shell=True, stdin=PIPE, stdout=PIPE, stderr=PIPE, universal_newlines=True)
+
+        ### SA9_volt_trip_time.png
+        graph_out = ts.results_dir() + "\SA9_volt_ride_through.png"
+        ts.log('graph_out = %s' % (graph_out))
+        graph_cmd = "set output " + "'" + graph_out + "'\n"
+        ts.log('graph_cmd1 = %s' % (graph_cmd))
+        graph_cmd = "set output " + "'" + graph_out + "'\n"
+        gnuplot.stdin.write(graph_cmd)
+        gnuplot.stdin.write('set term png size 1000, 1000\n')
+
+        gnuplot.stdin.write('set ylabel "Active Power (W)"\n')
+        gnuplot.stdin.write('set xdata time\n')
+        gnuplot.stdin.write('set xlabel "Time"\n')
+        gnuplot.stdin.write('set timefmt "%Y/%m/%d %H:%M:%S"\n')
+        gnuplot.stdin.write('set grid lw 1\n')
+        gnuplot.stdin.write('set key box\n')
+
+        graph_cmd = "set datafile separator ','\n"
+        gnuplot.stdin.write(graph_cmd)
+###        graph_cmd = "plot " + "'" + grf_dat_file + "'" + " using 1:2 with lines ti 'VRT Line', " + "'" + grf_dat_file + "' using 1:2 ti 'VRT Point' pt 7\n"
+        graph_cmd = "plot " + "'" + grf_dat_file + "' using 1:2 ti 'VRT Point' pt 7\n"
+        ts.log('graph_cmd1 = %s' % (graph_cmd))
+        gnuplot.stdin.write(graph_cmd)
+
+        ### Return setting
+        gnuplot.stdin.write('set terminal windows\n')
+        gnuplot.stdin.write('set output\n')
+### <END>
+
+
+
+
+
         result = script.RESULT_COMPLETE
 
     except script.ScriptFail, e:
@@ -307,8 +410,9 @@ def test_run():
     finally:
 
         # return voltage and power level to normal
-        grid.voltage(v_nom_grid)
-        pv.power_set(p_rated)
+###        grid.voltage(v_nom_grid)
+###        pv.power_set(p_rated)
+###        grid.power_set(p_rated)
 
         if eut is not None:
             eut.close()
@@ -316,8 +420,8 @@ def test_run():
             grid.close()
         if load is not None:
             load.close()
-        if pv is not None:
-            pv.close()
+###        if pv is not None:
+###            pv.close()
         if daq_rms is not None:
             daq_rms.close()
         if daq_wf is not None:
@@ -345,7 +449,8 @@ def run(test_script):
         ts.log_debug('Script: %s %s' % (ts.name, ts.info.version))
         ts.log_active_params()
 
-        ts.svp_version(required='1.5.3')
+###        ts.svp_version(required='1.5.3')
+        ts.svp_version(required='1.5.9')
 
         result = test_run()
 
@@ -359,7 +464,12 @@ def run(test_script):
 
     sys.exit(rc)
 
-info = script.ScriptInfo(name=os.path.basename(__file__), run=run, version='1.0.0')
+info = script.ScriptInfo(name=os.path.basename(__file__), run=run, version='4.0.0')
+
+info.param_group('aist', label='AIST Parameters', glob=True)
+info.param('aist.script_version', label='Script Version', default='2.0.0')
+info.param('aist.library_version', label='Library Version (gridsim_frea_ac_simulator)', default='4.1.0')
+
 
 '''
     eut
@@ -384,13 +494,16 @@ info = script.ScriptInfo(name=os.path.basename(__file__), run=run, version='1.0.
 '''
 
 info.param_group('eut', label='EUT Parameters', glob=True)
-info.param('eut.p_rated', label='P_rated', default=3000)
+info.param('eut.s_rated', label='Apparent power rating (VA)', default=0.0)
+#info.param('eut.p_rated', label='P_rated', default=3000)
+info.param('eut.p_rated', label='Output power rating (W)', default=0.0)
 info.param('eut.v_nom', label='V_nom', default=240.0)
 info.param('eut.phases', label='Phases', default='Single Phase', values=['Single Phase', '3-Phase 3-Wire',
                                                                          '3-Phase 4-Wire'])
 info.param('eut.v_msa', label='V_msa', default=2.0)
 info.param('eut.t_msa', label='T_msa', default=1.0)
 info.param('eut.vrt_t_dwell', label='VRT T_dwell', default=5)
+info.param('eut.ramp_rate', label='Power Ramp Rate (0.01%/s)', default=0)
 
 info.param_group('vrt', label='Test Parameters')
 info.param('vrt.test_label', label='Test Label', default='vrt')
@@ -422,7 +535,8 @@ das.params(info, 'das_rms', 'Data Acquisition (RMS)')
 das.params(info, 'das_wf', 'Data Acquisition (Waveform)')
 gridsim.params(info)
 loadsim.params(info)
-pvsim.params(info)
+###pvsim.params(info)
+hil.params(info)
 
 def script_info():
     

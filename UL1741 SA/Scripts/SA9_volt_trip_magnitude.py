@@ -1,3 +1,12 @@
+####################################################################################################
+# This script was tuned specifically for the AIST FREA environment (Fixed in 2018)
+#     AIST:National Institute of Advanced Industrial Science and Technology 
+#     FREA:Fukushima Renewable Energy Institute
+#
+# What is the AIST FREA environment
+#   Communication with SunSpecSVP is middleware called ExCon, and ExCon is
+#   a mechanism to communicate with inverters and simulators.
+####################################################################################################
 """
 Copyright (c) 2017, Sandia National Labs and SunSpec Alliance
 All rights reserved.
@@ -74,6 +83,8 @@ def run(test_script):
         ts.log_debug('Script: %s %s' % (ts.name, ts.info.version))
         ts.log_active_params()
 
+        ts.svp_version(required='1.5.9')
+
         result = test_run()
 
         ts.result(result)
@@ -87,6 +98,10 @@ def run(test_script):
     sys.exit(rc)
 
 info = script.ScriptInfo(name=os.path.basename(__file__), run=run, version='1.0.0')
+
+info.param_group('aist', label='AIST Parameters', glob=True)
+info.param('aist.script_version', label='Script Version', default='2.0.0')
+info.param('aist.library_version', label='Library Version (gridsim_frea_ac_simulator)', default='2.1.0')
 
 gridsim.params(info)
 pvsim.params(info)

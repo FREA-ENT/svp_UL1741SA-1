@@ -220,7 +220,7 @@ def test_run():
 
 ### Graph drawing for FREA original gnuplot
 ### <START>
-        grf_dat_file = ts.results_dir() + "\SA11_ramp_rate.csv"
+        grf_dat_file = ts.results_dir() + "\SA11_ramp_rate_3wave.csv"
         grf_dat_file = re.sub(r'\\', "/", grf_dat_file)
         ts.log('grf_dat_file = %s' % (grf_dat_file))
         grf_dat = open(grf_dat_file, mode='w')
@@ -294,16 +294,23 @@ def test_run():
                     ts.log('Nominal voltage V1= %s' % (v1))
                     ts.log('Nominal voltage V2= %s' % (v2))
                     ts.log('Nominal voltage V3= %s' % (v3))
-###                    v_trip_grid = (v1 * v_trip/100)                              # <- Adapted to library type
-                    v_trip_grid = (float(v1) * float(v_trip)/100)                   # <- Adapted to library type
+### Since it will not trip if only one phase, set the same value for all three phases
+### <START>
+###                    v_trip_grid = (v1 * v_trip/100)
+                    v_trip_grid1 = (float(v1) * float(v_trip)/100)
+                    v_trip_grid2 = (float(v2) * float(v_trip)/100)
+                    v_trip_grid3 = (float(v3) * float(v_trip)/100)
 ###                    grid.voltage((v_trip_grid, v2, v3))
-                    ts.log('Setting voltage to trip voltage (%s V)' % v_trip_grid)
+                    ts.log('Setting voltage to trip voltage1 (%s V)' % v_trip_grid1)
+                    ts.log('Setting voltage to trip voltage2 (%s V)' % v_trip_grid2)
+                    ts.log('Setting voltage to trip voltage3 (%s V)' % v_trip_grid3)
+### <END>
 ### for test           ts.log('Waiting for 5 seconds to start test')
 ### for test           ts.sleep(5)
 ### for test           ts.log('Nominal voltage V1= %s' % (v_trip_grid))
 ### for test           ts.log('Nominal voltage V2= %s' % (v2))
 ### for test           ts.log('Nominal voltage V3= %s' % (v3))
-                    grid.voltageRR(str(v_trip_grid), str(v2), str(v3))
+                    grid.voltageRR(str(v_trip_grid1), str(v_trip_grid2), str(v_trip_grid3))
                     ts.log('Waiting %s seconds' % (TRIP_WAIT_DELAY))
                     #ts.sleep(TRIP_WAIT_DELAY)
                     time.sleep(TRIP_WAIT_DELAY)
@@ -398,8 +405,8 @@ def test_run():
 
         gnuplot =  subprocess.Popen('gnuplot', shell=True, stdin=PIPE, stdout=PIPE, stderr=PIPE, universal_newlines=True)
 
-        ### SA11_ramp_rate.png
-        graph_out = ts.results_dir() + "\SA11_ramp_rate.png"
+        ### SA11_ramp_rate_3wave.png
+        graph_out = ts.results_dir() + "\SA11_ramp_rate_3wave.png"
         ts.log('graph_out = %s' % (graph_out))
         graph_cmd = "set output " + "'" + graph_out + "'\n"
         ts.log('graph_cmd1 = %s' % (graph_cmd))

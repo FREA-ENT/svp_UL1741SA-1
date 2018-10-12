@@ -1,4 +1,13 @@
-
+# coding: shift-jis
+####################################################################################################
+# This script was tuned specifically for the AIST FREA environment (Fixed in 2018)
+#     AIST:National Institute of Advanced Industrial Science and Technology 
+#     FREA:Fukushima Renewable Energy Institute
+#
+# What is the AIST FREA environment
+#   Communication with SunSpecSVP is middleware called ExCon, and ExCon is
+#   a mechanism to communicate with inverters and simulators.
+####################################################################################################
 """
 Copyright (c) 2017, Sandia National Labs and SunSpec Alliance
 All rights reserved.
@@ -35,14 +44,22 @@ import sys
 import os
 import traceback
 from svpelab import gridsim
-from svpelab import pvsim
+###from svpelab import pvsim       <- Commented out because middleware is communicated using gridsim
+###from svpelab import battsim     <- Commented out because middleware is communicated using gridsim, Since it is storage battery control, it added
 from svpelab import das
-from svpelab import der
+###from svpelab import der         <- Commented out because middleware is communicated using gridsim
 from svpelab import hil
 import script
 import math
 import result as rslt
 import numpy as np
+import time
+import subprocess
+from subprocess import PIPE
+import re
+import csv
+import codecs
+
 
 test_labels = {
     1: 'Test 1 - Most Aggressive',
@@ -115,6 +132,10 @@ def q_msa_range(v_value, v_msa, q_msa, v, q):
     :return: points for q_target, q_target_min, q_target_max
     """
 
+###    if v_value == None:
+###       v_value = 0
+
+    ts.log('v_value = %s, v_msa = %s, q_msa = %s, v = %s, q = %s' % (v_value, v_msa, q_msa, v, q))
     q_target = v_q(v_value, v, q)    # target reactive power for the voltage measurement
     q1 = v_q(v_value - v_msa, v, q)  # reactive power target from the lower voltage limit
     q2 = v_q(v_value + v_msa, v, q)  # reactive power target from the upper voltage limit
@@ -157,17 +178,23 @@ def test_pass_fail(var_act, var_min, var_max, var_aval=None, q_msa=None, priorit
     passfail = 'Fail'
 
     if priority == 'Reactive':
+        ts.log('test_pass_fail-1 var_min = %s, var_act = %s, var_max = %s' % (var_min, var_act, var_max))
         if var_min <= var_act <= var_max:
             passfail = 'Pass'
+            ts.log('test_pass_fail-1 var_min PASSED')
     else:  # priority is 'Active Power'
         if var_aval <= var_max:
             # if the available vars does not apply
+            ts.log('test_pass_fail-2 var_min = %s, var_act = %s, var_max = %s' % (var_min, var_act, var_max))
             if var_min <= var_act <= var_max:
                 passfail = 'Pass'
+                ts.log('test_pass_fail-2 var_min PASSED')
         else:
             # if the available vars does apply
+            ts.log('test_pass_fail-3 var_min = %s, var_act = %s, var_max = %s' % (var_min, var_act, var_max))
             if (var_aval - q_msa) <= var_act <= (var_aval + q_msa):
                 passfail = 'Pass'
+                ts.log('test_pass_fail-3 var_min PASSED')
 
     return passfail
 
@@ -183,7 +210,7 @@ def test_run():
     p_max = None
     v_nom_grid = None
 
-    result_params = {
+    result_params={
         'plot.title': 'title_name',
         'plot.x.title': 'Time (secs)',
         'plot.x.points': 'TIME',
@@ -202,9 +229,12 @@ def test_run():
     }
 
     try:
+        # read aist parameters
+        s_version = ts.param_value('aist.script_version')
+        l_version = ts.param_value('aist.library_version')
+
         # read test parameters
         tests_param = ts.param_value('eut_vv.tests')
-
         s_rated = ts.param_value('eut_vv.s_rated')
         p_rated = ts.param_value('eut_vv.p_rated')
         var_rated = ts.param_value('eut_vv.var_rated')
@@ -222,17 +252,32 @@ def test_run():
         deadband_min = ts.param_value('eut_vv.vv_deadband_min')
         deadband_max = ts.param_value('eut_vv.vv_deadband_max')
         t_settling = ts.param_value('eut_vv.vv_t_settling')
+        p_ramp_rate = ts.param_value('eut_vv.ramp_rate')
         phases = ts.param_value('eut_vv.phases')
 
         if phases == 'Single Phase':
-            sc_points = ['V_ACT_1', 'Q_ACT_1',  # 'V_ACT_PU_1', 'Q_ACT_PU_1',
+### Correction as graph is not displayed
+### <START>
+###            sc_points = ['V_ACT_1', 'Q_ACT_1',  # 'V_ACT_PU_1', 'Q_ACT_PU_1',
+###                         'V_TARGET_1', 'Q_TARGET_1', 'Q_MIN_1', 'Q_MAX_1', 'Q_MIN_ERROR_1', 'Q_MAX_ERROR_1']
+            sc_points = ['TIME', 'AC_P_1', 'AC_Q_1', 'AC_VRMS_1', 'V_ACT_1', 'Q_ACT_1',  # 'V_ACT_PU_1', 'Q_ACT_PU_1',
                          'V_TARGET_1', 'Q_TARGET_1', 'Q_MIN_1', 'Q_MAX_1', 'Q_MIN_ERROR_1', 'Q_MAX_ERROR_1']
+### <END>
         else:
-            sc_points = ['V_ACT_1', 'Q_ACT_1',  # 'V_ACT_PU_1', 'Q_ACT_PU_1',
+### Correction as graph is not displayed
+### <START>
+###            sc_points = ['V_ACT_1', 'Q_ACT_1',  # 'V_ACT_PU_1', 'Q_ACT_PU_1',
+###                         'V_TARGET_1', 'Q_TARGET_1', 'Q_MIN_1', 'Q_MAX_1', 'Q_MIN_ERROR_1', 'Q_MAX_ERROR_1',
+###                         'V_ACT_2', 'Q_ACT_2',  # 'V_ACT_PU_2', 'Q_ACT_PU_2',
+###                         'V_TARGET_2', 'Q_TARGET_2', 'Q_MIN_2', 'Q_MAX_2', 'Q_MIN_ERROR_2', 'Q_MAX_ERROR_2',
+###                         'V_ACT_3', 'Q_ACT_3',  # 'V_ACT_PU_3', 'Q_ACT_PU_3',
+###                         'V_TARGET_3', 'Q_TARGET_3', 'Q_MIN_3', 'Q_MAX_3', 'Q_MIN_ERROR_3', 'Q_MAX_ERROR_3']
+### <END>
+            sc_points = ['TIME', 'AC_P_1', 'AC_Q_1', 'AC_VRMS_1', 'V_ACT_1', 'Q_ACT_1',  # 'V_ACT_PU_1', 'Q_ACT_PU_1',
                          'V_TARGET_1', 'Q_TARGET_1', 'Q_MIN_1', 'Q_MAX_1', 'Q_MIN_ERROR_1', 'Q_MAX_ERROR_1',
-                         'V_ACT_2', 'Q_ACT_2',  # 'V_ACT_PU_2', 'Q_ACT_PU_2',
+                         'AC_P_2', 'AC_Q_2', 'AC_VRMS_2', 'V_ACT_2', 'Q_ACT_2',  # 'V_ACT_PU_2', 'Q_ACT_PU_2',
                          'V_TARGET_2', 'Q_TARGET_2', 'Q_MIN_2', 'Q_MAX_2', 'Q_MIN_ERROR_2', 'Q_MAX_ERROR_2',
-                         'V_ACT_3', 'Q_ACT_3',  # 'V_ACT_PU_3', 'Q_ACT_PU_3',
+                         'AC_P_3', 'AC_Q_3', 'AC_VRMS_3', 'V_ACT_3', 'Q_ACT_3',  # 'V_ACT_PU_3', 'Q_ACT_PU_3',
                          'V_TARGET_3', 'Q_TARGET_3', 'Q_MIN_3', 'Q_MAX_3', 'Q_MIN_ERROR_3', 'Q_MAX_ERROR_3']
 
         p_min_pct = ts.param_value('srd.vv_p_min_pct')
@@ -428,10 +473,21 @@ def test_run():
         except Exception, e:
             v_nom_grid = v_nom
 
-        # pv simulator is initialized with test parameters and enabled
-        pv = pvsim.pvsim_init(ts)
-        pv.power_set(p_max)
-        pv.power_on()
+### Commented out because middleware is communicated using gridsim
+### <START>
+###        # pv simulator is initialized with test parameters and enabled
+###        pv = pvsim.pvsim_init(ts)
+###        pv.power_set(p_max)
+###        pv.power_on()
+### <END>
+
+### Commented out because middleware is communicated using gridsim
+### <START>
+###        # batt simulator is initialized with test parameters and enabled
+###        batt = battsim.battsim_init(ts)
+###        batt.power_set(p_max)
+###        batt.power_on()
+### <END>
 
         # initialize data acquisition
         daq = das.das_init(ts, sc_points=sc_points)
@@ -441,28 +497,40 @@ def test_run():
         else:
             n_phase = 3
 
-        for ph in range(n_phase):
-            ph_val = ph + 1  # phase names start at 1 (not zero)
-            daq.sc['V_ACT_%i' % ph_val] = ''
-            daq.sc['Q_ACT_%i' % ph_val] = ''
-            # daq.sc['V_ACT_PU_%i' % ph_val] = ''
-            # daq.sc['Q_ACT_PU_%i' % ph_val] = ''
-            daq.sc['V_TARGET_%i' % ph_val] = ''
-            daq.sc['Q_TARGET_%i' % ph_val] = ''
-            daq.sc['Q_MIN_%i' % ph_val] = ''
-            daq.sc['Q_MAX_%i' % ph_val] = ''
-            daq.sc['Q_MIN_ERROR_%i' % ph_val] = ''
-            daq.sc['Q_MAX_ERROR_%i' % ph_val] = ''
+### Commenting as graph is not displayed
+### <START>
+###        for ph in range(n_phase):
+###            ph_val = ph + 1  # phase names start at 1 (not zero)
+###            daq.sc['TIME'] = ''
+###            daq.sc['AC_P_%i' % ph_val] = ''
+###            daq.sc['AC_Q_%i' % ph_val] = ''
+###            daq.sc['AC_VRMS_%i' % ph_val] = ''
+
+###            daq.sc['V_ACT_%i' % ph_val] = ''
+###            daq.sc['Q_ACT_%i' % ph_val] = ''
+###            # daq.sc['V_ACT_PU_%i' % ph_val] = ''
+###            # daq.sc['Q_ACT_PU_%i' % ph_val] = ''
+###            daq.sc['V_TARGET_%i' % ph_val] = ''
+###            daq.sc['Q_TARGET_%i' % ph_val] = ''
+###            daq.sc['Q_MIN_%i' % ph_val] = ''
+###            daq.sc['Q_MAX_%i' % ph_val] = ''
+###            daq.sc['Q_MIN_ERROR_%i' % ph_val] = ''
+###            daq.sc['Q_MAX_ERROR_%i' % ph_val] = ''
+### <END>
 
         '''
         3) Turn on the EUT. Set all L/HVRT parameters to the widest range of adjustability possible with the
         VV Q(V) enabled. The EUT's range of disconnect settings may depend on which function(s) are enabled.
         '''
         # it is assumed the EUT is on
-        eut = der.der_init(ts)
-        if eut is not None:
-            eut.config()
-            eut.fixed_pf(params={'Ena': False})
+### Commented out because middleware is communicated using gridsim
+### <START>
+###        eut = der.der_init(ts)
+###        if eut is not None:
+###            eut.config()
+###            eut.fixed_pf(params={'Ena': False})
+### <END>
+        grid.fixed_pf(params={'Ena': False})    # <- Change to control from grid
 
         settling_time = t_settling
 
@@ -480,6 +548,23 @@ def test_run():
                                  'Point Result 2, Var Actual 2, Var Target 2, Var Min Allowed 2, Var Max Allowed 2,'
                                  'Point Result 3, Var Actual 3, Var Target 3, Var Min Allowed 3, Var Max Allowed 3,'
                                  'Average Voltage (pu), Total Reactive Power (pu)\n')
+
+### Graph drawing for FREA original gnuplot
+### <START>
+        # For PONT
+        grf_dat_file_point = ts.results_dir() + "\SA13_volt_var_point.csv"
+        grf_dat_file_point = re.sub(r'\\', "/", grf_dat_file_point)
+        ts.log('grf_dat_file_point = %s' % (grf_dat_file_point))
+        grf_dat = open(grf_dat_file_point, mode='w')
+        writer_point = csv.writer(grf_dat, lineterminator='\n')
+
+        # For Ideal line
+        grf_dat_file_line = ts.results_dir() + "\SA13_volt_var_line.csv"
+        grf_dat_file_line = re.sub(r'\\', "/", grf_dat_file_line)
+        ts.log('grf_dat_file_line = %s' % (grf_dat_file_line))
+        grf_dat = open(grf_dat_file_line, mode='w')
+        writer_line = csv.writer(grf_dat, lineterminator='\n')
+### <END>
 
         for priority in power_priorities:
             '''
@@ -502,6 +587,7 @@ def test_run():
                 q_min_points = []
                 q_max_points = []
                 for p in v_points:
+### for test                   ts.log('p = %d, v_msa = %d, var_msa = %d, tests[test][0] = %s, tests[test][1] = %s' % (p, v_msa, var_msa, tests[test][0], tests[test][1]))
                     q_target, q_min, q_max = q_msa_range(p, v_msa, var_msa, tests[test][0], tests[test][1])
                     q_points.append(q_target)
                     q_min_points.append(q_min)
@@ -537,25 +623,41 @@ def test_run():
                 # configure EUT if configure enabled
                 if tests[test][2]:
                     # set volt/var curve
-                    if eut is not None:
-                        eut.volt_var_curve(1, params={
+###                    if eut is not None:      <- Commented out because middleware is communicated using gridsim
+                    if grid is not None:        # <- Change to control from grid
+### Since rounding off will result in the same value for each phase, it is taken as not to round off.
+### <START>
+###                        grid.volt_var_curve(1, params={
+###                        grid.volt_var_curve(1, params={
+###                            # convert curve points to percentages and set DER parameters
+###                            'v': [round(v[1]/v_nom*100.0), round(v[2]/v_nom*100.0), round(v[3]/v_nom*100.0),
+###                                  round(v[4]/v_nom*100.0)],
+###                            'var': [round(q[1]/q_max_over*100.0), round(q[2]/q_max_over*100.0),
+###                                    round(q[3]/q_max_over*100.0), round(q[4]/q_max_over*100.0)],
+###                            'Dept_Ref': dept_ref,
+                        grid.volt_var_curve(1, params={
                             # convert curve points to percentages and set DER parameters
-                            'v': [round(v[1]/v_nom*100.0), round(v[2]/v_nom*100.0), round(v[3]/v_nom*100.0),
-                                  round(v[4]/v_nom*100.0)],
-                            'var': [round(q[1]/q_max_over*100.0), round(q[2]/q_max_over*100.0),
-                                    round(q[3]/q_max_over*100.0), round(q[4]/q_max_over*100.0)],
+                            'v': [(v[1]/v_nom*100.0), (v[2]/v_nom*100.0), (v[3]/v_nom*100.0),
+                                  (v[4]/v_nom*100.0)],
+                            'var': [(q[1]/q_max_over*100.0), (q[2]/q_max_over*100.0),
+                                    (q[3]/q_max_over*100.0), (q[4]/q_max_over*100.0)],
                             'Dept_Ref': dept_ref,
                         })
+### <END>
 
                         # enable volt/var curve and verify
-                        eut.volt_var(params={'ActCrv': 1, 'Ena': True})
-                        parameters = eut.volt_var()
+###                        eut.volt_var(params={'ActCrv': 1, 'Ena': True})  <- Commented out because middleware is communicated using gridsim
+                        grid.volt_var(params={'ActCrv': 1, 'Ena': True})    # <- Change to control from grid
+###                        parameters = eut.volt_var()                      <- Commented out because middleware is communicated using gridsim
+                        parameters = grid.volt_var()                        # <- Change to control from grid
                         ts.log_debug('EUT VV settings (readback): %s' % parameters)
                         if parameters['Ena'] == False:
                             ts.log_debug('Could not enable the VV function. Trying again in 3 seconds.')
                             ts.sleep(3)
-                            eut.volt_var(params={'Ena': True})
-                            parameters = eut.volt_var()
+###                            eut.volt_var(params={'Ena': True})           <- Commented out because middleware is communicated using gridsim
+                            grid.volt_var(params={'Ena': True})             # <- Change to control from grid
+###                            parameters = eut.volt_var()                  <- Commented out because middleware is communicated using gridsim
+                            parameters = grid.volt_var()                    # <- Change to control from grid
                             ts.log_debug('EUT VV settings (readback): %s' % parameters)
                             if parameters['Ena'] == False:
                                 ts.log_error('VV function is not enabled!')
@@ -565,8 +667,12 @@ def test_run():
                 for level in power_levels:
                     power = level[0]
                     # set input power level
-                    ts.log('    Setting the input power of the PV simulator to %0.2f' % (p_max * power))
-                    pv.power_set(p_max * power)
+                    ts.log('    Setting the input power of the BATT simulator to %0.2f' % (p_max * power))
+###                    pv.power_set(p_max * power)                          <- Commented out because middleware is communicated using gridsim
+###                    batt.power_set(p_max * power)                        <- Commented out because middleware is communicated using gridsim
+###                    grid.power_set(p_max * power)                        # <- Change to control from grid
+###                    grid.power_set(p_max * power, s_rated)                  # <- Change to control from grid
+                    grid.power_setVV(p_max * power, s_rated, p_ramp_rate)   # <- Change to control from grid
 
                     count = level[1]
                     for i in xrange(1, count + 1):
@@ -604,6 +710,23 @@ def test_run():
                                                                      power*100., i))
                             filename = '%s.csv' % (test_str)
                             test_passfail = 'Pass'
+                            data = grid.wt3000_data_capture_read()         # <- Since the graph is not displayed, it is added
+                            daq.sc['TIME'] = time.time()                   # <- Since the graph is not displayed, it is added
+                            daq.sc['AC_P_1'] = data.get('AC_P_1')          # <- Since the graph is not displayed, it is added
+                            daq.sc['AC_P_2'] = data.get('AC_P_2')          # <- Since the graph is not displayed, it is added
+                            daq.sc['AC_P_3'] = data.get('AC_P_3')          # <- Since the graph is not displayed, it is added
+                            daq.sc['Q_ACT_1'] = data.get('AC_Q_1')         # <- Since the graph is not displayed, it is added
+                            daq.sc['Q_ACT_2'] = data.get('AC_Q_2')         # <- Since the graph is not displayed, it is added
+                            daq.sc['Q_ACT_3'] = data.get('AC_Q_3')         # <- Since the graph is not displayed, it is added
+                            daq.sc['AC_Q_1'] = data.get('AC_Q_1')          # <- Since the graph is not displayed, it is added
+                            daq.sc['AC_Q_2'] = data.get('AC_Q_2')          # <- Since the graph is not displayed, it is added
+                            daq.sc['AC_Q_3'] = data.get('AC_Q_3')          # <- Since the graph is not displayed, it is added
+                            daq.sc['AC_VRMS_1'] = data.get('AC_VRMS_1')    # <- Since the graph is not displayed, it is added
+                            daq.sc['AC_VRMS_2'] = data.get('AC_VRMS_2')    # <- Since the graph is not displayed, it is added
+                            daq.sc['AC_VRMS_3'] = data.get('AC_VRMS_3')    # <- Since the graph is not displayed, it is added
+                            daq.sc['V_ACT_1'] = data.get('AC_VRMS_1')      # <- Since the graph is not displayed, it is added
+                            daq.sc['V_ACT_2'] = data.get('AC_VRMS_2')      # <- Since the graph is not displayed, it is added
+                            daq.sc['V_ACT_3'] = data.get('AC_VRMS_3')      # <- Since the graph is not displayed, it is added
                             daq.data_capture(True)
 
                             for p in range(len(v_test_points)):
@@ -616,12 +739,16 @@ def test_run():
                                 ts.sleep(settling_time)
                                 # get last voltage reading
                                 daq.data_sample()
-                                data = daq.data_capture_read()
+###                                data = daq.data_capture_read()         <- Commented out because middleware is communicated using gridsim
+                                data = grid.wt3000_data_capture_read()    # <- Change to control from grid
 
                                 # Collect data from the end of the settling time
                                 v_act = [data.get('AC_VRMS_1')]
+                                ts.log('v_act = %s' % (v_act))
                                 q_act = [data.get('AC_Q_1')]
+                                ts.log('q_act = %s' % (q_act))
                                 p_act = [data.get('AC_P_1')]
+                                ts.log('p_act = %s' % (p_act))
                                 if phases != 'Single Phase':
                                     v_act.append(data.get('AC_VRMS_2'))
                                     v_act.append(data.get('AC_VRMS_3'))
@@ -661,12 +788,22 @@ def test_run():
                                         q_min[ph] = q_min[ph]/3.
                                         q_max[ph] = q_max[ph]/3.
 
+###                                    now = time.ctime()
+###                                    cnvtime = time.strptime(now)                                             # <- Since the graph is not displayed, it is added
+###                                    daq.sc['TIME'] = time.strftime("%Y/%m/%d %H:%M:%S", cnvtime)             # <- Since the graph is not displayed, it is added
+###                                    ts.log('TIME = %s' % (time.strftime("%Y/%m/%d %H:%M:%S", cnvtime)))      # <- Since the graph is not displayed, it is added
+                                    daq.sc['TIME'] = time.time()                                             # <- Since the graph is not displayed, it is added
+                                    daq.sc['AC_P_%i' % ph_val] = p_act[ph]                                   # <- Since the graph is not displayed, it is added
+                                    daq.sc['AC_Q_%i' % ph_val] = q_act[ph]                                   # <- Since the graph is not displayed, it is added
+                                    daq.sc['AC_VRMS_%i' % ph_val] = v_act[ph]                                # <- Since the graph is not displayed, it is added
+
                                     daq.sc['V_ACT_%i' % ph_val] = v_act[ph]
                                     daq.sc['Q_ACT_%i' % ph_val] = q_act[ph]
                                     # daq.sc['V_ACT_PU_%i' % ph_val] = v_act_pu[ph]
                                     # daq.sc['Q_ACT_PU_%i' % ph_val] = q_act_pu
                                     daq.sc['V_TARGET_%i' % ph_val] = v_target
-                                    daq.sc['Q_TARGET_%i' % ph_val] = q_target[ph]
+###                                    daq.sc['Q_TARGET_%i' % ph_val] = q_target[ph]
+                                    daq.sc['Q_TARGET_%i' % ph_val] = q_test_points[p]
                                     daq.sc['Q_MIN_%i' % ph_val] = q_min[ph]
                                     daq.sc['Q_MAX_%i' % ph_val] = q_max[ph]
                                     daq.sc['Q_MIN_ERROR_%i' % ph_val] = abs(q_target[ph] - q_min[ph])
@@ -676,10 +813,12 @@ def test_run():
                                     if priority == 'Reactive':
                                         passfail[ph] = test_pass_fail(var_act=q_act[ph], var_min=q_min[ph],
                                                                       var_max=q_max[ph])
+                                        ts.log('q_act1 = %s, q_min1 = %s, q_max1 = %s' % (q_act[ph], q_min[ph], q_max[ph]))
                                     else:
                                         passfail[ph] = test_pass_fail(var_act=q_act[ph], var_min=q_min[ph],
                                                                       var_max=q_max[ph], var_aval=var_aval[ph],
                                                                       q_msa=var_msa, priority=priority)
+                                        ts.log('q_act2 = %s, q_min2 = %s, q_max2 = %s' % (q_act[ph], q_min[ph], q_max[ph]))
                                     if passfail[ph] == 'Fail':
                                         test_passfail = 'Fail'
                                         result = script.RESULT_FAIL
@@ -691,22 +830,53 @@ def test_run():
 
                                 # Clear soft channel data. Hopefully only 1 data entry will include the soft
                                 # channel data, but it's not guaranteed
-                                for ph in range(len(v_act)):  # for each phase
-                                    ph_val = ph + 1  # phase names start at 1 (not zero)
-                                    daq.sc['V_ACT_%i' % ph_val] = ''
-                                    daq.sc['Q_ACT_%i' % ph_val] = ''
-                                    # daq.sc['V_ACT_PU_%i' % ph_val] = ''
-                                    # daq.sc['Q_ACT_PU_%i' % ph_val] = ''
-                                    daq.sc['V_TARGET_%i' % ph_val] = ''
-                                    daq.sc['Q_TARGET_%i' % ph_val] = ''
-                                    daq.sc['Q_MIN_%i' % ph_val] = ''
-                                    daq.sc['Q_MAX_%i' % ph_val] = ''
-                                    daq.sc['Q_MIN_ERROR_%i' % ph_val] = ''
-                                    daq.sc['Q_MAX_ERROR_%i' % ph_val] = ''
+### Commenting as graph is not displayed
+### <START>
+###                                for ph in range(len(v_act)):  # for each phase
+###                                    ph_val = ph + 1  # phase names start at 1 (not zero)
+
+###                                    daq.sc['TIME'] = ''
+###                                    daq.sc['AC_P_%i' % ph_val] = ''
+###                                    daq.sc['AC_Q_%i' % ph_val] = ''
+###                                    daq.sc['AC_VRMS_%i' % ph_val] = ''
+
+###                                    daq.sc['V_ACT_%i' % ph_val] = ''
+###                                    daq.sc['Q_ACT_%i' % ph_val] = ''
+###                                    # daq.sc['V_ACT_PU_%i' % ph_val] = ''
+###                                    # daq.sc['Q_ACT_PU_%i' % ph_val] = ''
+###                                    daq.sc['V_TARGET_%i' % ph_val] = ''
+###                                    daq.sc['Q_TARGET_%i' % ph_val] = ''
+###                                    daq.sc['Q_MIN_%i' % ph_val] = ''
+###                                    daq.sc['Q_MAX_%i' % ph_val] = ''
+###                                    daq.sc['Q_MIN_ERROR_%i' % ph_val] = ''
+###                                    daq.sc['Q_MAX_ERROR_%i' % ph_val] = ''
+### <END>
 
                                 # For plotting purposes, collect the (V, Q) point for this test point
+                                ts.log('v_act = %s, v_nom = %s' % (v_act, v_nom))
                                 v_act_pu = np.mean(v_act)/v_nom
+                                ts.log('q_act = %s, q_max_over = %s' % (q_act, q_max_over))
                                 q_act_pu = sum(q_act)/q_max_over
+
+### Graph drawing for FREA original gnuplot
+### <START>
+                                grf_rec = [v_act_pu, q_act_pu]
+                                writer_point.writerow(grf_rec)
+
+                                '''
+                                if phases == 'Single Phase':
+                                    tmp_v = np.mean(v_target)/v_nom
+                                    tmp_q = np.mean(q_target)/1000
+                                else:
+                                    tmp_v = np.mean(v_target)/v_nom
+###                                    tmp_q = np.mean(q_target)*3/1000
+                                    tmp_q = np.mean(q_target)/1000
+                                '''
+                                tmp_v = v_target/v_nom
+                                tmp_q = q_test_points[p]/1000
+                                grf_rec = [tmp_v, tmp_q]
+                                writer_line.writerow(grf_rec)
+### <END>
 
                                 # create result summary entry of the final measurements and pass/fail results
                                 if result_summary is not None:
@@ -723,7 +893,6 @@ def test_run():
                                                                 passfail[1], q_act[1], q_target[1], q_min[1], q_max[1],
                                                                 passfail[2], q_act[2], q_target[2], q_min[2], q_max[2],
                                                                 v_act_pu, q_act_pu))
-
                             # stop capture and save
                             daq.data_capture(False)
                             ds = daq.data_capture_dataset()
@@ -762,31 +931,88 @@ def test_run():
             other Priority, return the simulated EPS voltage to nominal, and repeat steps (5) - (10).
             '''
 
+        grf_dat.close()
+
     except script.ScriptFail, e:
         reason = str(e)
         if reason:
             ts.log_error(reason)
     finally:
+        ts.log('--------------Finally START----------------')
 
         if daq is not None:
             daq.close()
-        if pv is not None:
-            if p_max is not None:
-                pv.power_set(p_max)
-            pv.close()
+### Commented out because middleware is communicated using gridsim
+### <START>
+###        if pv is not None:
+###            if p_max is not None:
+###                pv.power_set(p_max)
+###            pv.close()
+###        if batt is not None:
+###            batt.close()
+###            if p_max is not None:
+###                ts.log('p_max = %s' % (p_max))
+###                batt.power_set(p_max)
+### <END>
         if grid is not None:
-            if v_nom_grid is not None:
-                grid.voltage(v_nom_grid)
             grid.close()
+            if v_nom_grid is not None:
+                ts.log('v_nom_grid = %s' % (v_nom_grid))
+                grid.voltage(v_nom_grid)
         if chil is not None:
             chil.close()
         if result_summary is not None:
             result_summary.close()
 
         # create result workbook
+###        file = ts.config_name() + '.xlsx'
+###        rslt.result_workbook(file, ts.results_dir(), ts.result_dir())
+###        ts.result_file(file)
         xlsxfile = ts.config_name() + '.xlsx'
         rslt.result_workbook(xlsxfile, ts.results_dir(), ts.result_dir())
         ts.result_file(xlsxfile)
+
+
+
+
+
+### Graph drawing for FREA original gnuplot
+### <START>
+
+        gnuplot =  subprocess.Popen('gnuplot', shell=True, stdin=PIPE, stdout=PIPE, stderr=PIPE, universal_newlines=True)
+
+        ### SA13_volt_var.png
+        graph_out = ts.results_dir() + "\SA13_volt_var.png"
+        ts.log('graph_out = %s' % (graph_out))
+        graph_cmd = "set output " + "'" + graph_out + "'\n"
+        ts.log('graph_cmd1 = %s' % (graph_cmd))
+        graph_cmd = "set output " + "'" + graph_out + "'\n"
+
+###        gnuplot.stdin.write('set xlabel "Average Voltage (pu)"\n')
+###        gnuplot.stdin.write('set ylabel "Total Reactive Power (pu)"\n')
+        gnuplot.stdin.write('set xlabel "Voltage [pu]"\n')
+        gnuplot.stdin.write('set ylabel "Reactive Power [Kvar]"\n')
+        gnuplot.stdin.write('set term png size 1000, 1000\n')
+        gnuplot.stdin.write('set grid lw 1\n')
+        gnuplot.stdin.write('set key box\n')
+        gnuplot.stdin.write(graph_cmd)
+        graph_cmd = "set datafile separator ','\n"
+        gnuplot.stdin.write(graph_cmd)
+###        graph_cmd = "plot " + "'" + grf_dat_file_line + "'" + " with lines ti 'Ideal Line', " + "'" + grf_dat_file_point + "' ti 'Measurement Point' pt 7\n"
+        graph_cmd = "plot " + "'" + grf_dat_file_line + "'" + " ti 'Ideal Point' with points pt 7 lc rgb 'blue', " + "'" + grf_dat_file_point + "' ti 'Measurement Point' with points pt 7 lc rgb 'magenta'\n"
+###        graph_cmd = "plot " + "'" + grf_dat_file_line + "'" + " ti 'Ideal Point' with linespoints pt 7 lc rgb 'blue', " + "'" + grf_dat_file_point + "' ti 'Measurement Point' with points pt 7 lc rgb 'red'\n"
+###        graph_cmd = "plot " + "'" + grf_dat_file_point + "' ti 'Measurement Point' pt 7\n"
+        ts.log('graph_cmd1 = %s' % (graph_cmd))
+        gnuplot.stdin.write(graph_cmd)
+
+        ### Return setting
+        gnuplot.stdin.write('set terminal windows\n')
+        gnuplot.stdin.write('set output\n')
+### <END>
+
+
+
+
 
     return result
 
@@ -803,7 +1029,8 @@ def run(test_script):
         ts.log_debug('Script: %s %s' % (ts.name, ts.info.version))
         ts.log_active_params()
 
-        ts.svp_version(required='1.5.3')
+###        ts.svp_version(required='1.5.3')
+        ts.svp_version(required='1.5.9')
 
         result = test_run()
 
@@ -818,6 +1045,13 @@ def run(test_script):
     sys.exit(rc)
 
 info = script.ScriptInfo(name=os.path.basename(__file__), run=run, version='1.0.0')
+
+### Add for version control
+### <START>
+info.param_group('aist', label='AIST Parameters', glob=True)
+info.param('aist.script_version', label='Script Version', default='4.0.0')
+info.param('aist.library_version', label='Library Version (gridsim_frea_ac_simulator)', default='4.1.0')
+### <END>
 
 info.param_group('vv', label='Test Parameters')
 info.param('vv.test_1', label='Test 1 - Most Agressive Curve', default='Enabled', values=['Disabled', 'Enabled'])
@@ -860,12 +1094,15 @@ info.param('eut_vv.k_var_max', label='Maximum slope (VAr/V)', default=0.0)
 info.param('eut_vv.vv_deadband_min', label='Deadband minimum range (V)', default=0.0)
 info.param('eut_vv.vv_deadband_max', label='Deadband maximum range (V)', default=0.0)
 info.param('eut_vv.vv_t_settling', label='Settling time (t)', default=0.0)
+info.param('eut_vv.ramp_rate', label='Power Ramp Rate (0.01%/s)', default=0)
 
 info.param('eut_vv.phases', label='Phases', default='Single Phase', values=['Single Phase', '3-Phase 3-Wire',
                                                                          '3-Phase 4-Wire'])
-der.params(info)
+
+###der.params(info)          <- Commented out because middleware is communicated using gridsim
 gridsim.params(info)
-pvsim.params(info)
+###pvsim.params(info)        <- Commented out because middleware is communicated using gridsim
+###battsim.params(info)      <- Commented out because middleware is communicated using gridsim, Since it is storage battery control, it added
 das.params(info)
 hil.params(info)
 
