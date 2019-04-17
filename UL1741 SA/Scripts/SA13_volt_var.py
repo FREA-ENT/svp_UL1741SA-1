@@ -1,6 +1,6 @@
 # coding: shift-jis
 ####################################################################################################
-# This script was tuned specifically for the AIST FREA environment (Fixed in 2018)
+# This script was tuned specifically for the AIST FREA environment (Fixed in 2019)
 #     AIST:National Institute of Advanced Industrial Science and Technology 
 #     FREA:Fukushima Renewable Energy Institute
 #
@@ -203,12 +203,18 @@ def test_run():
 
     result = script.RESULT_PASS
     daq = None
+    daq_wf = None
     pv = None
     grid = None
     chil = None
     result_summary = None
     p_max = None
     v_nom_grid = None
+    grf_dat_point = None
+    grf_dat_line1 = None
+    grf_dat_line2 = None
+    grf_dat_line3 = None
+    test_count = 0
 
     result_params={
         'plot.title': 'title_name',
@@ -235,6 +241,10 @@ def test_run():
 
         # read test parameters
         tests_param = ts.param_value('eut_vv.tests')
+        v_gain = ts.param_value('eut_vv.v_gain')                 # GAIN
+        ts.log('v_gain = %s' % (v_gain))                         # GAIN
+        v_gain_offset = ts.param_value('eut_vv.v_gain_offset')   # GAIN
+        ts.log('v_gain = %s' % (v_gain))                         # GAIN
         s_rated = ts.param_value('eut_vv.s_rated')
         p_rated = ts.param_value('eut_vv.p_rated')
         var_rated = ts.param_value('eut_vv.var_rated')
@@ -458,9 +468,9 @@ def test_run():
         and held at nominal throughout this test. Set the EUT power to Pmax.
         '''
         # initialize HIL environment, if necessary
-        chil = hil.hil_init(ts)
-        if chil is not None:
-            chil.config()
+###        chil = hil.hil_init(ts)
+###        if chil is not None:
+###            chil.config()
 
         # grid simulator is initialized with test parameters and enabled
         grid = gridsim.gridsim_init(ts)
@@ -470,8 +480,11 @@ def test_run():
         # factor is applied.
         try:
             v_nom_grid = grid.v_nom_param
+            ts.log('v_nom_grid (1) = %s' % (v_nom_grid))   # GAIN
         except Exception, e:
             v_nom_grid = v_nom
+            ts.log('v_nom_grid (2) = %s' % (v_nom_grid))   # GAIN
+        ts.log('v_nom_grid = %s' % (v_nom_grid))
 
 ### Commented out because middleware is communicated using gridsim
 ### <START>
@@ -496,6 +509,14 @@ def test_run():
             n_phase = 1
         else:
             n_phase = 3
+
+### DL850E compatible
+### <START>
+        # initialize waveform data acquisition
+        daq_wf = das.das_init(ts, 'das_wf')
+        if daq_wf is not None:
+            ts.log('DAS Waveform device: %s' % (daq_wf.info()))
+### <END>
 
 ### Commenting as graph is not displayed
 ### <START>
@@ -555,15 +576,29 @@ def test_run():
         grf_dat_file_point = ts.results_dir() + "\SA13_volt_var_point.csv"
         grf_dat_file_point = re.sub(r'\\', "/", grf_dat_file_point)
         ts.log('grf_dat_file_point = %s' % (grf_dat_file_point))
-        grf_dat = open(grf_dat_file_point, mode='w')
-        writer_point = csv.writer(grf_dat, lineterminator='\n')
+        grf_dat_point = open(grf_dat_file_point, mode='w')
+        writer_point = csv.writer(grf_dat_point, lineterminator='\n')
 
-        # For Ideal line
-        grf_dat_file_line = ts.results_dir() + "\SA13_volt_var_line.csv"
-        grf_dat_file_line = re.sub(r'\\', "/", grf_dat_file_line)
-        ts.log('grf_dat_file_line = %s' % (grf_dat_file_line))
-        grf_dat = open(grf_dat_file_line, mode='w')
-        writer_line = csv.writer(grf_dat, lineterminator='\n')
+        # For Ideal line1
+        grf_dat_file_line1 = ts.results_dir() + "\SA13_volt_var_line1.csv"
+        grf_dat_file_line1 = re.sub(r'\\', "/", grf_dat_file_line1)
+        ts.log('grf_dat_file_line1 = %s' % (grf_dat_file_line1))
+        grf_dat_line1 = open(grf_dat_file_line1, mode='w')
+        writer_line1 = csv.writer(grf_dat_line1, lineterminator='\n')
+
+        # For Ideal line2
+        grf_dat_file_line2 = ts.results_dir() + "\SA13_volt_var_line2.csv"
+        grf_dat_file_line2 = re.sub(r'\\', "/", grf_dat_file_line2)
+        ts.log('grf_dat_file_line2 = %s' % (grf_dat_file_line2))
+        grf_dat_line2 = open(grf_dat_file_line2, mode='w')
+        writer_line2 = csv.writer(grf_dat_line2, lineterminator='\n')
+
+        # For Ideal line3
+        grf_dat_file_line3 = ts.results_dir() + "\SA13_volt_var_line3.csv"
+        grf_dat_file_line3 = re.sub(r'\\', "/", grf_dat_file_line3)
+        ts.log('grf_dat_file_line3 = %s' % (grf_dat_file_line3))
+        grf_dat_line3 = open(grf_dat_file_line3, mode='w')
+        writer_line3 = csv.writer(grf_dat_line3, lineterminator='\n')
 ### <END>
 
         for priority in power_priorities:
@@ -577,6 +612,8 @@ def test_run():
             '''
             for test in active_tests:
                 ts.log('Starting test - %s' % (test_labels[test]))
+
+                test_count = test_count + 1
 
                 # create voltage settings along all segments of the curve
                 v = tests[test][0]
@@ -653,7 +690,8 @@ def test_run():
                         ts.log_debug('EUT VV settings (readback): %s' % parameters)
                         if parameters['Ena'] == False:
                             ts.log_debug('Could not enable the VV function. Trying again in 3 seconds.')
-                            ts.sleep(3)
+###                            ts.sleep(3)
+                            time.sleep(3)
 ###                            eut.volt_var(params={'Ena': True})           <- Commented out because middleware is communicated using gridsim
                             grid.volt_var(params={'Ena': True})             # <- Change to control from grid
 ###                            parameters = eut.volt_var()                  <- Commented out because middleware is communicated using gridsim
@@ -728,15 +766,21 @@ def test_run():
                             daq.sc['V_ACT_2'] = data.get('AC_VRMS_2')      # <- Since the graph is not displayed, it is added
                             daq.sc['V_ACT_3'] = data.get('AC_VRMS_3')      # <- Since the graph is not displayed, it is added
                             daq.data_capture(True)
+                            if daq_wf is not None:                         # DL850E compatible
+                                daq_wf.data_capture(True)                  # DL850E compatible
 
                             for p in range(len(v_test_points)):
                                 v_target = v_test_points[p]
                                 q_target = q_test_points[p]
                                 ts.log('        Setting the grid voltage to %0.2f and waiting %0.1f seconds. '
                                        'Q_targ = %s' % (v_target, settling_time, q_target))
-                                grid.voltage(v_target/v_nom * v_nom_grid)
+# GAIN Start
+###                                grid.voltage(v_target/v_nom * v_nom_grid)
+                                grid.voltage(((v_target/v_nom * v_nom_grid) * v_gain) + v_gain_offset)
+# GAIN END
                                 # capture a data sample with trigger enabled
-                                ts.sleep(settling_time)
+###                                ts.sleep(settling_time)
+                                time.sleep(settling_time)
                                 # get last voltage reading
                                 daq.data_sample()
 ###                                data = daq.data_capture_read()         <- Commented out because middleware is communicated using gridsim
@@ -783,10 +827,10 @@ def test_run():
                                                                                      tests[test][0], tests[test][1])
 
                                     # For 3-phase inverters, the reactive power is spread across all 3 phases
-                                    if phases != 'Single Phase':
-                                        q_target[ph] = q_target[ph]/3.
-                                        q_min[ph] = q_min[ph]/3.
-                                        q_max[ph] = q_max[ph]/3.
+###                                    if phases != 'Single Phase':
+###                                        q_target[ph] = q_target[ph]/3.
+###                                        q_min[ph] = q_min[ph]/3.
+###                                        q_max[ph] = q_max[ph]/3.
 
 ###                                    now = time.ctime()
 ###                                    cnvtime = time.strptime(now)                                             # <- Since the graph is not displayed, it is added
@@ -823,7 +867,8 @@ def test_run():
                                         test_passfail = 'Fail'
                                         result = script.RESULT_FAIL
 
-                                    ts.sleep(0.05)  # insert small sleep so the test/suite can be stopped.
+###                                    ts.sleep(0.05)  # insert small sleep so the test/suite can be stopped.
+                                    time.sleep(0.05) # insert small sleep so the test/suite can be stopped.
 
                                 # Ensure that 1 data entry includes the soft channel data.
                                 daq.data_sample()
@@ -860,7 +905,11 @@ def test_run():
 
 ### Graph drawing for FREA original gnuplot
 ### <START>
-                                grf_rec = [v_act_pu, q_act_pu]
+                                #grf_rec = [v_act_pu, q_act_pu]
+                                if phases == 'Single Phase':
+                                    grf_rec = [v_act_pu, sum(q_act)/1000]
+                                else:
+                                    grf_rec = [v_act_pu, sum(q_act)/3/1000]
                                 writer_point.writerow(grf_rec)
 
                                 '''
@@ -875,7 +924,13 @@ def test_run():
                                 tmp_v = v_target/v_nom
                                 tmp_q = q_test_points[p]/1000
                                 grf_rec = [tmp_v, tmp_q]
-                                writer_line.writerow(grf_rec)
+
+                                if test_count == 1:
+                                    writer_line1.writerow(grf_rec)
+                                if test_count == 2:
+                                    writer_line2.writerow(grf_rec)
+                                if test_count == 3:
+                                    writer_line3.writerow(grf_rec)
 ### <END>
 
                                 # create result summary entry of the final measurements and pass/fail results
@@ -895,6 +950,14 @@ def test_run():
                                                                 v_act_pu, q_act_pu))
                             # stop capture and save
                             daq.data_capture(False)
+                            if daq_wf is not None:         # DL850E compatible
+                               daq_wf.data_capture(False)  # DL850E compatible
+                            time.sleep(3)                  # DL850E compatible
+###                            ts.sleep(3)                    # DL850E compatible
+                            if daq_wf is not None:         # DL850E compatible
+                               daq_wf.data_save()          # DL850E compatible
+                            time.sleep(5)                  # DL850E compatible
+###                            ts.sleep(5)                    # DL850E compatible
                             ds = daq.data_capture_dataset()
                             ds.to_csv(ts.result_file_path(filename))
                             result_params['plot.title'] = test_str
@@ -931,7 +994,10 @@ def test_run():
             other Priority, return the simulated EPS voltage to nominal, and repeat steps (5) - (10).
             '''
 
-        grf_dat.close()
+        grf_dat_point.close()
+        grf_dat_line1.close()
+        grf_dat_line2.close()
+        grf_dat_line3.close()
 
     except script.ScriptFail, e:
         reason = str(e)
@@ -942,6 +1008,11 @@ def test_run():
 
         if daq is not None:
             daq.close()
+        if daq_wf is not None:             # DL850E compatible
+            daq_wf.data_capture(False)     # DL850E compatible
+            time.sleep(3)                  # DL850E compatible
+###            ts.sleep(3)                    # DL850E compatible
+            daq_wf.close()                 # DL850E compatible
 ### Commented out because middleware is communicated using gridsim
 ### <START>
 ###        if pv is not None:
@@ -959,10 +1030,18 @@ def test_run():
             if v_nom_grid is not None:
                 ts.log('v_nom_grid = %s' % (v_nom_grid))
                 grid.voltage(v_nom_grid)
-        if chil is not None:
-            chil.close()
+###        if chil is not None:
+###            chil.close()
         if result_summary is not None:
             result_summary.close()
+        if grf_dat_point is not None:
+            grf_dat_point.close()
+        if grf_dat_line1 is not None:
+            grf_dat_line1.close()
+        if grf_dat_line2 is not None:
+            grf_dat_line2.close()
+        if grf_dat_line3 is not None:
+            grf_dat_line3.close()
 
         # create result workbook
 ###        file = ts.config_name() + '.xlsx'
@@ -992,15 +1071,29 @@ def test_run():
 ###        gnuplot.stdin.write('set ylabel "Total Reactive Power (pu)"\n')
         gnuplot.stdin.write('set xlabel "Voltage [pu]"\n')
         gnuplot.stdin.write('set ylabel "Reactive Power [Kvar]"\n')
+
+###        set_over = round(float(q_max_over)/1000) + 0.5
+###        set_under = round(float(q_max_under)/1000) - 0.5
+        set_over = (round(float(q_max_over)/1000) + 0.5)*1.25
+        set_under = (round(float(q_max_under)/1000) - 0.5)*1.25
+        set_cmd = "set yrange[" + str(set_under) + ":" + str(set_over) + "]\n"
+        gnuplot.stdin.write(set_cmd)
+
         gnuplot.stdin.write('set term png size 1000, 1000\n')
         gnuplot.stdin.write('set grid lw 1\n')
-        gnuplot.stdin.write('set key box\n')
+###        gnuplot.stdin.write('set key box\n')
         gnuplot.stdin.write(graph_cmd)
         graph_cmd = "set datafile separator ','\n"
         gnuplot.stdin.write(graph_cmd)
 ###        graph_cmd = "plot " + "'" + grf_dat_file_line + "'" + " with lines ti 'Ideal Line', " + "'" + grf_dat_file_point + "' ti 'Measurement Point' pt 7\n"
-        graph_cmd = "plot " + "'" + grf_dat_file_line + "'" + " ti 'Ideal Point' with points pt 7 lc rgb 'blue', " + "'" + grf_dat_file_point + "' ti 'Measurement Point' with points pt 7 lc rgb 'magenta'\n"
+###        graph_cmd = "plot " + "'" + grf_dat_file_line + "'" + " ti 'Ideal Point' with points pt 7 lc rgb 'blue', " + "'" + grf_dat_file_point + "' ti 'Measurement Point' with points pt 7 lc rgb 'magenta'\n"
 ###        graph_cmd = "plot " + "'" + grf_dat_file_line + "'" + " ti 'Ideal Point' with linespoints pt 7 lc rgb 'blue', " + "'" + grf_dat_file_point + "' ti 'Measurement Point' with points pt 7 lc rgb 'red'\n"
+        if test_count == 1:
+           graph_cmd = "plot " + "'" + grf_dat_file_line1 + "'" + " ti 'Ideal Point1' with linespoints pt 7 lc rgb 'navy', " + "'" + grf_dat_file_point + "' ti 'Measurement Point' with points pt 7 lc rgb 'red'\n"
+        if test_count == 2:
+           graph_cmd = "plot " + "'" + grf_dat_file_line1 + "'" + " ti 'Ideal Point1' with linespoints pt 7 lc rgb 'navy', " + "'" + grf_dat_file_line2 + "'" + " ti 'Ideal Point2' with linespoints pt 7 lc rgb 'blue', " + "'" + grf_dat_file_line3 + "'" + " with linespoints pt 7 lc rgb 'blue', " + "'" + grf_dat_file_point + "' ti 'Measurement Point' with points pt 7 lc rgb 'red'\n"
+        if test_count == 3:
+           graph_cmd = "plot " + "'" + grf_dat_file_line1 + "'" + " ti 'Ideal Point1' with linespoints pt 7 lc rgb 'navy', " + "'" + grf_dat_file_line2 + "'" + " ti 'Ideal Point2' with linespoints pt 7 lc rgb 'blue', " + "'" + grf_dat_file_line3 + "'" + " ti 'Ideal Point3' with linespoints pt 7 lc rgb 'skyblue', " + "'" + grf_dat_file_point + "' ti 'Measurement Point' with points pt 7 lc rgb 'red'\n"
 ###        graph_cmd = "plot " + "'" + grf_dat_file_point + "' ti 'Measurement Point' pt 7\n"
         ts.log('graph_cmd1 = %s' % (graph_cmd))
         gnuplot.stdin.write(graph_cmd)
@@ -1049,8 +1142,9 @@ info = script.ScriptInfo(name=os.path.basename(__file__), run=run, version='1.0.
 ### Add for version control
 ### <START>
 info.param_group('aist', label='AIST Parameters', glob=True)
-info.param('aist.script_version', label='Script Version', default='4.0.0')
-info.param('aist.library_version', label='Library Version (gridsim_frea_ac_simulator)', default='4.1.0')
+info.param('aist.script_version', label='Script Version', default='5.0.b')
+info.param('aist.library1_version', label='Library Version (gridsim_frea_simulator)', default='4.4.0')
+info.param('aist.library2_version', label='Library Version (das_dl850e)', default='1.0.0')
 ### <END>
 
 info.param_group('vv', label='Test Parameters')
@@ -1078,6 +1172,8 @@ info.param('srd.vv_k_var_min', label='Minimum slope (Var/V)', default=0.0)
 info.param('srd.vv_segment_point_count', label='Measurement points per curve segment', default=3)
 
 info.param_group('eut_vv', label='EUT VV Parameters', glob=True)
+info.param('eut_vv.v_gain', label='Gain', default=0.9926)                # GAIN
+info.param('eut_vv.v_gain_offset', label='Gain Offset', default=2.8298)  # GAIN
 info.param('eut_vv.s_rated', label='Apparent power rating (VA)', default=0.0)
 info.param('eut_vv.p_rated', label='Output power rating (W)', default=0.0)
 info.param('eut_vv.var_rated', label='Output var rating (vars)', default=0.0)
@@ -1104,7 +1200,8 @@ gridsim.params(info)
 ###pvsim.params(info)        <- Commented out because middleware is communicated using gridsim
 ###battsim.params(info)      <- Commented out because middleware is communicated using gridsim, Since it is storage battery control, it added
 das.params(info)
-hil.params(info)
+das.params(info, 'das_wf', 'Data Acquisition (Waveform)')     # DL850E compatible
+###hil.params(info)
 
 def script_info():
     

@@ -1,6 +1,6 @@
 # coding: shift-jis
 ####################################################################################################
-# This script was tuned specifically for the AIST FREA environment (Fixed in 2018)
+# This script was tuned specifically for the AIST FREA environment (Fixed in 2019)
 #     AIST:National Institute of Advanced Industrial Science and Technology 
 #     FREA:Fukushima Renewable Energy Institute
 #
@@ -44,10 +44,10 @@ import sys
 import os
 import traceback
 from svpelab import gridsim
-from svpelab import loadsim
-###from svpelab import pvsim
+###from svpelab import loadsim     <- Commented out because middleware is communicated using gridsim
+###from svpelab import pvsim       <- Commented out because middleware is communicated using gridsim
 from svpelab import das
-from svpelab import der
+###from svpelab import der         <- Commented out because middleware is communicated using gridsim
 import result as rslt
 from svpelab import hil
 import script
@@ -58,6 +58,220 @@ import subprocess
 from subprocess import PIPE
 import re
 import csv
+
+import ctypes                      # WT3000 compatible
+from ctypes import *               # WT3000 compatible
+import threading                   # WT3000 compatible
+
+
+
+### WT3000 compatible
+### <START>
+def wt3000_format_set(dll, device_id):
+
+    ts.log('--------------WT3000 FORMAT SET command Start----------------')
+
+    rtn_up = {}
+    msg = ""
+
+    #------------------------
+    #SET Format
+    #------------------------
+    msg = ":NUMERIC:FORMAT ASCII"
+    rtn = dll.TmSend(device_id, msg)
+    if rtn == 0:
+        ts.log('@@@(WT3000) SET Format OK: %s' % (rtn))
+    else:
+        ts.log('@@@(WT3000) SET Format NG: %s' % (rtn))
+
+    #------------------------
+    #SET Number of Items
+    #------------------------
+    msg = ":NUMERIC:NORMAL:NUMBER 3"
+    rtn = dll.TmSend(device_id, msg)
+    if rtn == 0:
+        ts.log('@@@(WT3000) SET Number of Items OK: %s' % (rtn))
+    else:
+        ts.log('@@@(WT3000) SET Number of Items NG: %s' % (rtn))
+
+    #------------------------
+    #SET Items
+    #------------------------
+#    msg = ":NUMERIC:NORMAL:"
+#    msg = msg + "ITEM1 P,SIGMA,Total;"
+#    msg = msg + "ITEM2 Q,SIGMA,Total;"
+#    msg = msg + "ITEM3 S,SIGMA,Total;"
+#    msg = msg + "ITEM4 LAMBDA,SIGMA,Total;"
+#    msg = msg + "ITEM5 I,SIGMA,Total;"
+
+    msg = ":NUMERIC:NORMAL:"
+    msg = msg + "ITEM1 P,SIGMA,Total;"
+    msg = msg + "ITEM2 VRMS,SIGMA,Total;"
+###    msg = msg + "ITEM3 IRMS,SIGMA,Total;"
+    msg = msg + "ITEM3 I,SIGMA,Total;"
+    rtn = dll.TmSend(device_id, msg)
+    if rtn == 0:
+        ts.log('@@@(WT3000) SET Items OK: %s' % (rtn))
+    else:
+        ts.log('@@@(WT3000) SET Items NG: %s' % (rtn))
+
+
+    ts.log('--------------WT3000 FORMATSET command End-----------------')
+
+    pass
+
+def wt3000_data_read(dll, device_id):
+
+    ts.log('--------------WT3000 command Start----------------')
+
+    rtn_up = {}
+    msg = ""
+
+    #------------------------
+    #SET VALUE?
+    #------------------------
+    msg = ":NUMERIC:NORMAL:VALUE?"
+    rtn = dll.TmSend(device_id, msg)
+    if rtn == 0:
+        ts.log('@@@(WT3000) SET VALUE? OK: %s' % (rtn))
+    else:
+        ts.log('@@@(WT3000) SET VALUE? NG: %s' % (rtn))
+
+
+    buf = ctypes.create_string_buffer(1024,1024)
+    bufsize = ctypes.c_int(1024)
+    length = ctypes.c_int()
+    rtn = dll.TmReceive(device_id, buf, bufsize, ctypes.pointer(length))
+    if rtn == 0:
+        ts.log('@@@(WT3000) RECEIVE OK: %s' % (rtn))
+    else:
+        ts.log('@@@(WT3000) RECEIVE NG: %s' % (rtn))
+
+    ts.log('buf.value: %s' % (buf.value))
+    ts.log('length: %s' % (length))
+
+
+    #------------------------
+    #Return Data Set
+    #------------------------
+    tmp_data = buf.value.split(",")
+    ts.log('@@@(WT3000) split: %s' % (tmp_data))
+
+    # Active power(P)
+    if tmp_data[0] == "NAN" or tmp_data[0] == "INF":
+        rtn_up['AC_P_1'] = 0
+        rtn_up['AC_P_2'] = 0
+        rtn_up['AC_P_3'] = 0
+    else:
+        rtn_up['AC_P_1'] = float(tmp_data[0])
+        rtn_up['AC_P_2'] = float(tmp_data[0])
+        rtn_up['AC_P_3'] = float(tmp_data[0])
+    ts.log('@@@(WT3000) Active power(P): %s' % (rtn_up['AC_P_1']))
+
+    # Voltage(U)
+    if tmp_data[1] == "NAN" or tmp_data[1] == "INF":
+        rtn_up['SIGMA_AC_VRMS_1'] = 0
+        rtn_up['SIGMA_AC_VRMS_2'] = 0
+        rtn_up['SIGMA_AC_VRMS_3'] = 0
+    else:
+        rtn_up['SIGMA_AC_VRMS_1'] = float(tmp_data[1])
+        rtn_up['SIGMA_AC_VRMS_2'] = float(tmp_data[1])
+        rtn_up['SIGMA_AC_VRMS_3'] = float(tmp_data[1])
+    ts.log('@@@(WT3000) Voltage(U): %s' % (rtn_up['SIGMA_AC_VRMS_1']))
+
+    # Current(I)
+    if tmp_data[2] == "NAN" or tmp_data[2] == "INF":
+        rtn_up['SIGMA_AC_IRMS_1'] = 0
+        rtn_up['SIGMA_AC_IRMS_2'] = 0
+        rtn_up['SIGMA_AC_IRMS_3'] = 0
+    else:
+        rtn_up['SIGMA_AC_IRMS_1'] = float(tmp_data[2])
+        rtn_up['SIGMA_AC_IRMS_2'] = float(tmp_data[2])
+        rtn_up['SIGMA_AC_IRMS_3'] = float(tmp_data[2])
+    ts.log('@@@(WT3000) Current(I): %s' % (rtn_up['SIGMA_AC_IRMS_1']))
+
+
+
+    '''
+    #------------------------
+    #Local Test Code start
+    #------------------------
+    # Active power(P)
+    rtn_up['AC_P_1'] = 12000
+    rtn_up['AC_P_2'] = 12000
+    rtn_up['AC_P_3'] = 12000
+
+    # Voltage(U)
+    rtn_up['SIGMA_AC_VRMS_1'] = 190
+    rtn_up['SIGMA_AC_VRMS_2'] = 190
+    rtn_up['SIGMA_AC_VRMS_3'] = 190
+
+    # Current(I)
+    rtn_up['SIGMA_AC_IRMS_1'] = 205
+    rtn_up['SIGMA_AC_IRMS_2'] = 205
+    rtn_up['SIGMA_AC_IRMS_3'] = 205
+    '''
+
+    ts.log('--------------WT3000 command End-----------------')
+
+    return rtn_up
+
+### <END>
+
+
+### Add for Thread control
+### <START>
+def MeasureThread(e ,MeasurMachine ,writer_active ,m_time ,dll ,device_id ,phases):
+
+    ts.log('--------------MeasureThread Start----------------')
+
+    sv_time = time.time()
+
+    MeasureData = wt3000_format_set(dll, device_id)
+    ts.log('@@@wt3000_format_set()')
+
+    MeasureData = wt3000_data_read(dll, device_id)
+    ts.log('@@@wt3000_data_read()')
+
+    MeasureTime = time.time() - sv_time
+
+    #------------------------
+    # Active power
+    #------------------------
+#    if phases == 'Single Phase':
+#        grf_rec_active = [MeasureTime, (MeasureData.get('AC_P_1')/1000)]
+#    else:
+#        grf_rec_active = [MeasureTime, (MeasureData.get('AC_P_1')/1000)*3]
+    grf_rec_active = [MeasureTime, (MeasureData.get('AC_P_1')/1000)]
+    writer_active.writerow(grf_rec_active)
+    ts.log('grf_rec_active: %s ' % (grf_rec_active))
+
+#    for i in range(99999):
+    while not e.stop_event.is_set():
+        time.sleep(m_time)
+        ts.sleep(m_time)          # DL850E compatible
+        #event_is_set = e.wait()
+        #ts.log('@@@ Starting MeasureThread cnt = %s' % (i))
+
+        MeasureData = wt3000_data_read(dll, device_id)
+        ts.log('@@@wt3000_data_read()')
+
+        MeasureTime = time.time() - sv_time
+
+        #------------------------
+        # Active power
+        #------------------------
+#        if phases == 'Single Phase':
+#            grf_rec_active = [MeasureTime, (MeasureData.get('AC_P_1')/1000)]
+#        else:
+#            grf_rec_active = [MeasureTime, (MeasureData.get('AC_P_1')/1000)*3]
+        grf_rec_active = [MeasureTime, (MeasureData.get('AC_P_1')/1000)]
+        writer_active.writerow(grf_rec_active)
+        ts.log('grf_rec_active: %s ' % (grf_rec_active))
+
+    ts.log('--------------MeasureThread End------------------')
+    pass
+### <END>
 
 
 def voltage_rt_profile(v_nom=100, v1_t=100, v2_t=100, v3_t=100, t_fall=0, t_hold=1, t_rise=0, t_dwell=5, n=5):
@@ -112,6 +326,15 @@ def test_run():
     result = script.RESULT_FAIL
     eut = grid = load = pv = daq_rms = daq_wf = chil = None
 
+    grf_dat_file_active = None
+
+    sv_time = -1
+
+    dll = None                       # WT3000 compatible
+    tcp_control = ctypes.c_int(4)    # WT3000 compatible
+    device_id = ctypes.c_int()       # WT3000 compatible
+    e = None                         # WT3000 compatible
+
 ### Correction as graph is not displayed
 ### <START>
 ###    sc_points = ['AC_IRMS_MIN']
@@ -145,6 +368,9 @@ def test_run():
         v_test = ts.param_value('vrt.v_test')
         t_hold = ts.param_value('vrt.t_hold')
         n_r = ts.param_value('vrt.n_r')
+
+        ip_addr = ts.param_value('vrt.ip_addr')              # WT3000 compatible
+        m_time = ts.param_value('vrt.m_time')                # Add for Thread control
 
         # calculate voltage adjustment based on msa
         v_msa_adj = v_msa * 1.5
@@ -188,6 +414,23 @@ def test_run():
                 if ts.param_value('vrt.phase_1_3') == 'Enabled':
                     phase_tests.append(((v_t, v_n, v_t), 'Phase 1-3 Fault Test', 'p13'))
 
+
+
+### WT3000 compatible
+### <START>
+        dll = ctypes.WinDLL(r"C:\\Python27\\DLLs\\tmctl")
+        ts.log('@@@(WT3000) DLL OK')
+
+        tcp_address = ip_addr + ",anonymous,"
+        rtn = dll.TmcInitialize(tcp_control, tcp_address, ctypes.pointer(device_id))
+        if rtn == 0:
+            ts.log('@@@(WT3000) CONNECT OK: %s' % (rtn))
+        else:
+            ts.log('@@@(WT3000) CONNECT NG: %s' % (tcp_address))
+### <END>
+
+
+
         # initialize HIL environment, if necessary
         chil = hil.hil_init(ts)
         if chil is not None:
@@ -205,15 +448,18 @@ def test_run():
         except Exception, e:
             v_nom_grid = v_nom
 
-        # load simulator initialization
-        load = loadsim.loadsim_init(ts)
-        if load is not None:
-            ts.log('Load device: %s' % load.info())
+###        # load simulator initialization                  <- Commented out because middleware is communicated using gridsimZ
+###        load = loadsim.loadsim_init(ts)                  <- Commented out because middleware is communicated using gridsim
+###        if load is not None:                             <- Commented out because middleware is communicated using gridsim
+###            ts.log('Load device: %s' % load.info())      <- Commented out because middleware is communicated using gridsim
 
-        # pv simulator is initialized with test parameters and enabled
+### Commented out because middleware is communicated using gridsim
+### <START>
+###        # pv simulator is initialized with test parameters and enabled
 ###        pv = pvsim.pvsim_init(ts)
 ###        pv.power_set(p_rated)
 ###        pv.power_on()
+### <END>
 
         # initialize rms data acquisition
         daq_rms = das.das_init(ts, 'das_rms', sc_points=sc_points)
@@ -227,10 +473,12 @@ def test_run():
         if daq_wf is not None:
             ts.log('DAS Waveform device: %s' % (daq_wf.info()))
 
-        # it is assumed the EUT is on
-        eut = der.der_init(ts)
-        if eut is not None:
-            eut.config()
+### Commented out because middleware is communicated using gridsim
+###        # it is assumed the EUT is on
+###        eut = der.der_init(ts)
+###        if eut is not None:
+###            eut.config()
+### <END>
 
         # open result summary file
         '''
@@ -242,11 +490,20 @@ def test_run():
 
 ### Graph drawing for FREA original gnuplot
 ### <START>
-        grf_dat_file = ts.results_dir() + "\SA9_volt_ride_through.csv"
-        grf_dat_file = re.sub(r'\\', "/", grf_dat_file)
-        ts.log('grf_dat_file = %s' % (grf_dat_file))
-        grf_dat = open(grf_dat_file, mode='w')
-        writer = csv.writer(grf_dat, lineterminator='\n')
+        e = threading.Event()
+        e.stop_event = threading.Event()
+
+        # Active power
+        grf_dat_file_active = ts.results_dir() + "\SA9_volt_ride_through.csv"
+        grf_dat_file_active = re.sub(r'\\', "/", grf_dat_file_active)
+        ts.log('grf_dat_file_active = %s' % (grf_dat_file_active))
+        grf_dat_active = open(grf_dat_file_active, mode='w')
+        writer_active = csv.writer(grf_dat_active, lineterminator='\n')
+
+        thread = threading.Thread(target=MeasureThread, args=(e ,grid ,writer_active ,m_time ,dll, device_id, phases,))
+        thread.start()
+        time.sleep(1)
+#        ts.sleep(1)
 ### <END>
 
         # perform all power levels and phase tests
@@ -269,25 +526,33 @@ def test_run():
             '''
 
             for phase_test in phase_tests:
+
+                if daq_wf is not None:                                     # DL850E compatible
+                    daq_wf.data_capture(True)                              # DL850E compatible
+                    time.sleep(1)                                          # DL850E compatible
+
                 if daq_rms is not None:
 ###                    daq_rms.sc['AC_IRMS_MIN'] = ''
-                    data = grid.wt3000_data_capture_read()                 # <- Since the graph is not displayed, it is added
+#                    data = grid.wt3000_data_capture_read()                 # <- Since the graph is not displayed, it is added
+                    e.clear()                                              # Add for Thread control
+                    data = wt3000_data_read(dll, device_id)                # <- Since the graph is not displayed, it is added
+                    e.set()                                                # Add for Thread control
                     daq_rms.sc['TIME'] = time.time()                       # <- Since the graph is not displayed, it is added
-                    daq_rms.sc['AC_VRMS_1'] = data.get('AC_VRMS_1')        # <- Since the graph is not displayed, it is added
-                    daq_rms.sc['AC_IRMS_1'] = data.get('AC_IRMS_1')        # <- Since the graph is not displayed, it is added
+                    if sv_time == -1:                                      # <- Since the graph is not displayed, it is added
+                        sv_time = daq_rms.sc['TIME']                       # <- Since the graph is not displayed, it is added
+###                    daq_rms.sc['AC_VRMS_1'] = data.get('AC_VRMS_1')        # <- Since the graph is not displayed, it is added
+                    daq_rms.sc['AC_VRMS_1'] = data.get('SIGMA_AC_VRMS_1')        # <- Since the graph is not displayed, it is added
+###                    daq_rms.sc['AC_IRMS_1'] = data.get('AC_IRMS_1')        # <- Since the graph is not displayed, it is added
+                    daq_rms.sc['AC_IRMS_1'] = data.get('SIGMA_AC_IRMS_1')  # <- Since the graph is not displayed, it is added
                     daq_rms.sc['SC_TRIG'] = ''                             # <- Since the graph is not displayed, it is added
-                    irms = data.get('AC_IRMS_1')                           # <- Since the graph is not displayed, it is added
+###                    irms = data.get('AC_IRMS_1')                           # <- Since the graph is not displayed, it is added
+                    irms = data.get('SIGMA_AC_IRMS_1')                     # <- Since the graph is not displayed, it is added
                     daq_rms.sc['AC_IRMS_MIN'] = round(irms * .8, 2)        # <- Since the graph is not displayed, it is added
-### Graph drawing for FREA original gnuplot
-### <START>
-                    now = datetime.datetime.now()
-                    grf_rec = [now.strftime("%Y/%m/%d %H:%M:%S"), data.get('AC_VRMS_1')]
-                    writer.writerow(grf_rec)
-### <END>
                     ts.log('Starting RMS data capture')
                     daq_rms.data_capture(True)
                     ts.log('Waiting 5 seconds to start test')
-                    ts.sleep(5)
+#                    ts.sleep(5)
+                    time.sleep(5)                                          # DL850E compatible
                 v_1, v_2, v_3 = phase_test[0]
                 ts.log('Starting %s, v1 = %s%%  v2 = %s%%  v3 = %s%%' % (phase_test[1], v_1, v_2, v_3))
                 if profile_supported:
@@ -303,7 +568,8 @@ def test_run():
                         remaining_time = profile_time - (time.time()-start_time)
                         ts.log('Sleeping for another %0.1f seconds' % remaining_time)
                         sleep_time = min(remaining_time, 10)
-                        ts.sleep(sleep_time)
+#                        ts.sleep(sleep_time)
+                        time.sleep(sleep_time)                             # DL850E compatible
                     grid.profile_stop()
                 else:
                     # execute test sequence
@@ -314,22 +580,25 @@ def test_run():
                     if daq_rms is not None:
                         daq_rms.data_sample()
 ###                        data = daq_rms.data_capture_read()
-                        data = grid.wt3000_data_capture_read()                      # <- Since the graph is not displayed, it is added
-                        irms = data.get('AC_IRMS_1')
+#                        data = grid.wt3000_data_capture_read()                      # <- Since the graph is not displayed, it is added
+                        e.clear()                                                   # Add for Thread control
+                        data = wt3000_data_read(dll, device_id)                     # <- Since the graph is not displayed, it is added
+                        e.set()                                                     # Add for Thread control
+###                        irms = data.get('AC_IRMS_1')
+                        irms = data.get('SIGMA_AC_IRMS_1')
                         if irms is not None:
                              daq_rms.sc['TIME'] = time.time()                       # <- Since the graph is not displayed, it is added
-                             daq_rms.sc['AC_VRMS_1'] = data.get('AC_VRMS_1')        # <- Since the graph is not displayed, it is added
-                             daq_rms.sc['AC_IRMS_1'] = data.get('AC_IRMS_1')        # <- Since the graph is not displayed, it is added
+                             if sv_time == -1:                                      # <- Since the graph is not displayed, it is added
+                                 sv_time = daq_rms.sc['TIME']                       # <- Since the graph is not displayed, it is added
+####                             daq_rms.sc['AC_VRMS_1'] = data.get('AC_VRMS_1')        # <- Since the graph is not displayed, it is added
+                             daq_rms.sc['AC_VRMS_1'] = data.get('SIGMA_AC_VRMS_1')        # <- Since the graph is not displayed, it is added
+###                             daq_rms.sc['AC_IRMS_1'] = data.get('AC_IRMS_1')        # <- Since the graph is not displayed, it is added
+                             daq_rms.sc['AC_IRMS_1'] = data.get('SIGMA_AC_IRMS_1')  # <- Since the graph is not displayed, it is added
                              daq_rms.sc['SC_TRIG'] = ''                             # <- Since the graph is not displayed, it is added
                              daq_rms.sc['AC_IRMS_MIN'] = round(irms * .8, 2)
-### Graph drawing for FREA original gnuplot
-### <START>
-                        now = datetime.datetime.now()
-                        grf_rec = [now.strftime("%Y/%m/%d %H:%M:%S"), data.get('AC_VRMS_1')]
-                        writer.writerow(grf_rec)
-### <END>
 
-                    ts.sleep(t_hold)
+#                    ts.sleep(t_hold)
+                    time.sleep(t_hold)                                              # DL850E compatible
                     for i in range(n_r):
                         v = (v_n/100) * v_nom_grid
                         v1 = (v_1/100) * v_nom_grid
@@ -340,16 +609,19 @@ def test_run():
                         grid.voltageRH(v, v, v)
                         ts.log('Setting voltage: v_1 = %s  v_2 = %s  v_3 = %s for %s seconds' % (v, v, v,
                                                                                                  t_dwell))
-                        ts.sleep(t_dwell)
+#                        ts.sleep(t_dwell)
+                        time.sleep(t_dwell)                                         # DL850E compatible
 ###                        grid.voltage((v1, v2, v3))
                         grid.voltageRH(v1, v2, v3)
                         ts.log('Setting voltage: v_1 = %s  v_2 = %s  v_3 = %s for %s seconds' % (v1, v2, v3,
                                                                                                  t_hold))
-                        ts.sleep(t_hold)
+#                        ts.sleep(t_hold)
+                        time.sleep(t_hold)                                          # DL850E compatible
 ###                    grid.voltage((v, v, v))
                     grid.voltageRH(v, v, v)
                     ts.log('Setting voltage: v_1 = %s  v_2 = %s  v_3 = %s for %s seconds' % (v, v, v, t_dwell))
-                    ts.sleep(t_dwell)
+#                    ts.sleep(t_dwell)
+                    time.sleep(t_dwell)                                             # DL850E compatible
                 if daq_rms is not None:
                     daq_rms.data_capture(False)
                     ds = daq_rms.data_capture_dataset()
@@ -360,46 +632,29 @@ def test_run():
                     ts.result_file(filename, params=result_params)
                     ts.log('Saving data capture %s' % (filename))
 
+                if daq_wf is not None:                                              # DL850E compatible
+                    daq_wf.data_capture(False)                                      # DL850E compatible
+                    time.sleep(3)                                                   # DL850E compatible
+                    daq_wf.data_save()                                              # DL850E compatible
+                    time.sleep(5)                                                   # DL850E compatible
+
 
 
 
 
 ### Graph drawing for FREA original gnuplot
 ### <START>
+        e.stop_event.set()                                                          # WT3000 compatible
+        thread.join()                                                               # WT3000 compatible
 
-        gnuplot =  subprocess.Popen('gnuplot', shell=True, stdin=PIPE, stdout=PIPE, stderr=PIPE, universal_newlines=True)
+        grf_dat_active.close()                                                      # <- Since the graph is not displayed, it is added
 
-        ### SA9_volt_trip_time.png
-        graph_out = ts.results_dir() + "\SA9_volt_ride_through.png"
-        ts.log('graph_out = %s' % (graph_out))
-        graph_cmd = "set output " + "'" + graph_out + "'\n"
-        ts.log('graph_cmd1 = %s' % (graph_cmd))
-        graph_cmd = "set output " + "'" + graph_out + "'\n"
-        gnuplot.stdin.write(graph_cmd)
-        gnuplot.stdin.write('set term png size 1000, 1000\n')
-
-        gnuplot.stdin.write('set ylabel "Active Power (W)"\n')
-        gnuplot.stdin.write('set xdata time\n')
-        gnuplot.stdin.write('set xlabel "Time"\n')
-        gnuplot.stdin.write('set timefmt "%Y/%m/%d %H:%M:%S"\n')
-        gnuplot.stdin.write('set grid lw 1\n')
-        gnuplot.stdin.write('set key box\n')
-
-        graph_cmd = "set datafile separator ','\n"
-        gnuplot.stdin.write(graph_cmd)
-###        graph_cmd = "plot " + "'" + grf_dat_file + "'" + " using 1:2 with lines ti 'VRT Line', " + "'" + grf_dat_file + "' using 1:2 ti 'VRT Point' pt 7\n"
-        graph_cmd = "plot " + "'" + grf_dat_file + "' using 1:2 ti 'VRT Point' pt 7\n"
-        ts.log('graph_cmd1 = %s' % (graph_cmd))
-        gnuplot.stdin.write(graph_cmd)
-
-        ### Return setting
-        gnuplot.stdin.write('set terminal windows\n')
-        gnuplot.stdin.write('set output\n')
+        rtn = dll.TmFinish(device_id)                                               # WT3000 compatible
+        if rtn == 0:                                                                # WT3000 compatible
+            ts.log('@@@(WT3000) DISCONNECT OK: %s' % (rtn))                         # WT3000 compatible
+        else:                                                                       # WT3000 compatible
+            ts.log('@@@(WT3000) DISCONNECT NG: %s' % (rtn))                         # WT3000 compatible
 ### <END>
-
-
-
-
 
         result = script.RESULT_COMPLETE
 
@@ -408,23 +663,29 @@ def test_run():
         if reason:
             ts.log_error(reason)
     finally:
+        ts.log('--------------Finally START----------------')
 
         # return voltage and power level to normal
 ###        grid.voltage(v_nom_grid)
 ###        pv.power_set(p_rated)
 ###        grid.power_set(p_rated)
 
-        if eut is not None:
-            eut.close()
+### Commented out because middleware is communicated using gridsim
+### <START>
+###        if eut is not None:
+###            eut.close()
+### <END>
         if grid is not None:
             grid.close()
-        if load is not None:
-            load.close()
-###        if pv is not None:
-###            pv.close()
+###        if load is not None:                                                     <- Commented out because middleware is communicated using gridsim
+###            load.close()                                                         <- Commented out because middleware is communicated using gridsim
+###        if pv is not None:                                                       <- Commented out because middleware is communicated using gridsim
+###            pv.close()                                                           <- Commented out because middleware is communicated using gridsim
         if daq_rms is not None:
             daq_rms.close()
         if daq_wf is not None:
+            daq_wf.data_capture(False)                                              # DL850E compatible
+            time.sleep(3)                                                           # DL850E compatible
             daq_wf.close()
         if chil is not None:
             chil.close()
@@ -433,6 +694,51 @@ def test_run():
         file = ts.config_name() + '.xlsx'
         rslt.result_workbook(file, ts.results_dir(), ts.result_dir())
         ts.result_file(file)
+
+
+
+### Graph drawing for FREA original gnuplot
+### <START>
+        ### SA9_volt_ride_through.png
+        gnuplot =  subprocess.Popen('gnuplot', shell=True, stdin=PIPE, stdout=PIPE, stderr=PIPE, universal_newlines=True)
+
+        gnuplot.stdin.write('set xlabel "Time (seconds)"\n')
+        gnuplot.stdin.write('set ylabel "Active Power (kW)"\n')
+
+        set_over = (round(float(s_rated)/v_nom)) * 1.25
+#        set_under = (((round(float(s_rated)/v_nom)) * -1)) * 1.25
+        set_under = 0
+
+        set_cmd = "set yrange [" + str(set_under) + ":" + str(set_over) + "]\n"
+        gnuplot.stdin.write(set_cmd)
+
+        gnuplot.stdin.write('set ytics nomirror\n')
+
+        gnuplot.stdin.write('set term png size 1000, 1000\n')
+        gnuplot.stdin.write('set grid lw 1\n')
+###        gnuplot.stdin.write('set key box\n')
+
+        graph_out = ts.results_dir() + "\SA9_volt_ride_through.png"
+        ts.log('graph_out = %s' % (graph_out))
+        graph_cmd = "set output " + "'" + graph_out + "'\n"
+        ts.log('graph_cmd = %s' % (graph_cmd))
+        gnuplot.stdin.write(graph_cmd)
+
+        graph_cmd = "set datafile separator ','\n"
+        gnuplot.stdin.write(graph_cmd)
+
+        # Active power
+        graph_cmd = "plot " + "'" + grf_dat_file_active + "' using 1:2 ti 'VRT Point' pt 7\n"
+        ts.log('graph_cmd = %s' % (graph_cmd))
+
+        gnuplot.stdin.write(graph_cmd)
+
+        ### Return setting
+        gnuplot.stdin.write('set terminal windows\n')
+        gnuplot.stdin.write('set output\n')
+### <END>
+
+
 
     return result
 
@@ -530,12 +836,15 @@ info.param('vrt.phase_2_3', label='Phase 2-3 Fault Tests', default='Enabled', va
 info.param('vrt.phase_1_3', label='Phase 1-3 Fault Tests', default='Enabled', values=['Disabled', 'Enabled'],
            active='eut.phases', active_value=['3-Phase 4-Wire'])
 
-der.params(info)
+info.param('vrt.ip_addr', label='WT3000 IP Address for NonExCon', default='192.168.127.200')
+info.param('vrt.m_time', label='Measurement time interval (secs)', default=0.5)
+
+###der.params(info)        <- Commented out because middleware is communicated using gridsim
 das.params(info, 'das_rms', 'Data Acquisition (RMS)')
 das.params(info, 'das_wf', 'Data Acquisition (Waveform)')
 gridsim.params(info)
-loadsim.params(info)
-###pvsim.params(info)
+###loadsim.params(info)    <- Commented out because middleware is communicated using gridsim
+###pvsim.params(info)      <- Commented out because middleware is communicated using gridsim
 hil.params(info)
 
 def script_info():
